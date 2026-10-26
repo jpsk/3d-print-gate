@@ -1,0 +1,39 @@
+[
+  {
+    "plate": 1,
+    "name": "Parts",
+    "parts": [
+      {
+        "stl": "block.stl",
+        "x_mm": 20.0,
+        "y_mm": 32.0,
+        "walls": 3,
+        "infill": 15,
+        "brim_mm": 0.0
+      }
+    ]
+  },
+  {
+    "plate": "coupon",
+    "name": "Fit coupon",
+    "file": "fit_coupon.3mf",
+    "parts": [
+      {
+        "stl": "fit_coupon_holes.stl",
+        "x_mm": 2.0,
+        "y_mm": 32.0,
+        "walls": 2,
+        "infill": 15,
+        "brim_mm": 0
+      },
+      {
+        "stl": "fit_coupon_fits.stl",
+        "x_mm": 68.0,
+        "y_mm": 32.0,
+        "walls": 2,
+        "infill": 15,
+        "brim_mm": 0
+      }
+    ]
+  }
+]

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.Python
+
+# Slicer scratch. The project 3MF files under cad/print/ are committed.
+*.gcode
+*.gcode.3mf
+*.slicer.log
+*.bambu.log
+
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,33 @@
+name: Demo part cad check
+
+on:
+  pull_request:
+    paths:
+      - "examples/demo-part/cad/**"
+      - ".github/workflows/demo-part-cad-check.yml"
+      - ".github/workflows/print-gate.yml"
+      - "print-gate/**"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Check and slice every STL"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    uses: ./.github/workflows/print-gate.yml
+    with:
+      project: examples/demo-part/cad
+      # github.event.inputs is empty on pull_request. The `inputs` context
+      # is not available on that event, and referencing it makes GitHub
+      # record a run with 0 jobs. workflow_call inputs inside
+      # print-gate.yml are the `inputs` context of that called workflow.
+      full: ${{ github.event.inputs.full == 'true' }}
+      summary_title: Demo part
+      comment_marker: "<!-- demo-part-cad-check -->"
+      artifact_name: demo-part-cad-logs

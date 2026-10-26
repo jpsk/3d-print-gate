@@ -1,0 +1,50 @@
+# Print gate config. The tool is print-gate/check_print.py.
+# Supports stay off. A layer must sit inside the one below, grown by one
+# layer height (45° from vertical). Walls are at least 1.6 mm. Features
+# are at least 0.8 mm. Fixtures are known-bad parts and must fail.
+
+fixtures_dir: tools/fixtures
+
+min_feature:
+  max_thickness_mm: 0.80
+  min_thickness_mm: 0.24
+  min_length_mm: 1.2
+  min_height_mm: 1.6
+
+min_wall_mm: 1.6
+
+rules:
+  overhang: true
+  min_feature: true
+  min_wall: true
+  bed: true
+  manifold: true
+
+full_regex: "print-gate/|print-gate\\.yml|{{SLUG}}-cad-check\\.yml|{{CAD_PATH}}/tools/|{{CAD_PATH}}/parameters\\.scad|{{CAD_PATH}}/print_check\\.yaml"
+project_regex: "{{CAD_PATH}}/stl/|{{CAD_PATH}}/.*\\.scad$|plates\\.yaml|build_print_project\\.py|check_print\\.py|print-gate\\.yml|{{SLUG}}-cad-check\\.yml|print_check\\.yaml"
+
+tracked:
+  - print/project.3mf
+  - print/fit_coupon.3mf
+  - print/layout.json
+
+verify_projects:
+  - path: print/project.3mf
+    summary: project.md
+    heading: Project slice
+  - path: print/fit_coupon.3mf
+    summary: coupon.md
+    heading: Coupon slice
+
+deps:
+  parameters.scad: null
+  block.scad: [block.stl]
+  fit_coupon.scad: [fit_coupon_holes.stl, fit_coupon_fits.stl]
+
+fixtures:
+  - {file: floating_island.stl, expect: empty_layer, run: [overhang]}
+  - {file: boss_spaghetti.stl, expect: empty_layer, run: [overhang]}
+  - {file: fragile_flap.stl, expect: min_feature, run: [overhang]}
+  - {file: cantilever.stl, expect: overhang_45, run: [overhang]}
+  - {file: thin_wall.stl, expect: min_wall, run: [min_wall]}
+  - {file: proud_nub.stl, expect: overhang_45, run: [overhang]}
