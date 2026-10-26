@@ -1,0 +1,255 @@
+name: print gate
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: "CAD directory relative to the repo root"
+        required: true
+        type: string
+      full:
+        description: "Check and slice every STL"
+        required: false
+        type: boolean
+        default: false
+      machine_profile:
+        description: "Orca machine preset name, without .json"
+        required: false
+        type: string
+        default: "Bambu Lab X1 Carbon 0.4 nozzle"
+      process_profile:
+        description: "Orca process preset name, without .json"
+        required: false
+        type: string
+        default: "0.20mm Standard @BBL X1C"
+      filament_profile:
+        description: "Orca filament preset name, without .json"
+        required: false
+        type: string
+        default: "Bambu PETG Basic @BBL X1C"
+      summary_title:
+        description: "Heading on the job summary"
+        required: false
+        type: string
+        default: "Print gate"
+      comment_marker:
+        description: "HTML comment that identifies this check's pull request comment"
+        required: false
+        type: string
+        default: "<!-- print-gate -->"
+      artifact_name:
+        description: "Artifact name for logs and 3MF files"
+        required: false
+        type: string
+        default: "print-gate-logs"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        id: pip-cache
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-print-gate-${{ hashFiles('print-gate/requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: pip install -r print-gate/requirements.txt
+
+      - uses: actions/cache@v4
+        id: slicer-cache
+        with:
+          path: ${{ runner.tool_cache }}/orcaslicer-2.3.2
+          key: orcaslicer-2.3.2-ubuntu2404-x86_64
+
+      - name: Install OrcaSlicer
+        if: steps.slicer-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          ORCA_ROOT="${RUNNER_TOOL_CACHE}/orcaslicer-2.3.2"
+          curl -fsSL -o /tmp/orca.AppImage \
+            https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.3.2/OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.3.2.AppImage
+          chmod +x /tmp/orca.AppImage
+          mkdir -p /tmp/orca-extract
+          cd /tmp/orca-extract
+          /tmp/orca.AppImage --appimage-extract
+          rm -rf "$ORCA_ROOT"
+          mkdir -p "$(dirname "$ORCA_ROOT")"
+          mv /tmp/orca-extract/squashfs-root "$ORCA_ROOT"
+          rm -f /tmp/orca.AppImage
+
+      - uses: actions/cache@v4
+        id: bambu-cache
+        with:
+          path: ${{ runner.tool_cache }}/bambustudio-02.08.02.61
+          key: bambustudio-02.08.02.61-ubuntu2404-x86_64
+
+      - name: Install Bambu Studio
+        if: steps.bambu-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          BAMBU_ROOT="${RUNNER_TOOL_CACHE}/bambustudio-02.08.02.61"
+          curl -fsSL -o /tmp/BambuStudio.AppImage \
+            https://github.com/bambulab/BambuStudio/releases/download/v02.08.02.61/BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
+          chmod +x /tmp/BambuStudio.AppImage
+          mkdir -p /tmp/bambu-extract
+          cd /tmp/bambu-extract
+          /tmp/BambuStudio.AppImage --appimage-extract
+          rm -rf "$BAMBU_ROOT"
+          mkdir -p "$(dirname "$BAMBU_ROOT")"
+          mv /tmp/bambu-extract/squashfs-root "$BAMBU_ROOT"
+          rm -f /tmp/BambuStudio.AppImage
+
+      - name: Select changed files
+        id: files
+        env:
+          PROJECT: ${{ inputs.project }}
+          DISPATCH_FULL: ${{ inputs.full }}
+        run: |
+          set -euo pipefail
+          if [ "$DISPATCH_FULL" = "true" ]; then
+            : > /tmp/changed.txt
+            python3 print-gate/check_print.py --plan --project "$PROJECT" --dispatch-full --changed-file /tmp/changed.txt
+          else
+            BASE="${GITHUB_BASE_REF:-main}"
+            git fetch --no-tags origin "$BASE"
+            git diff --name-only "origin/${BASE}...HEAD" > /tmp/changed.txt
+            python3 print-gate/check_print.py --plan --project "$PROJECT" --changed-file /tmp/changed.txt
+          fi
+          echo "Changed files:"
+          cat /tmp/changed.txt
+
+      - name: Geometry and slicer gate
+        env:
+          PROJECT: ${{ inputs.project }}
+          MACHINE: ${{ inputs.machine_profile }}
+          PROCESS: ${{ inputs.process_profile }}
+          FILAMENT: ${{ inputs.filament_profile }}
+        run: |
+          set -euo pipefail
+          echo "full=${{ steps.files.outputs.full }} rebuild=${{ steps.files.outputs.project }}"
+          sudo apt-get update -qq
+          # The Ubuntu 24.04 AppImage does not bundle GL, GTK, or WebKit.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+            xvfb \
+            libegl1 libgl1 libopengl0 libglu1-mesa \
+            libgtk-3-0t64 libglib2.0-0 libxkbcommon0 libdbus-1-3 \
+            libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 \
+            libmspack0t64 \
+            libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+            libsecret-1-0 libsoup-3.0-0 >/dev/null
+          mkdir -p "$RUNNER_TEMP/cad-logs"
+          ORCA_ROOT="${RUNNER_TOOL_CACHE}/orcaslicer-2.3.2"
+          BAMBU_ROOT="${RUNNER_TOOL_CACHE}/bambustudio-02.08.02.61"
+          args=(--project "$PROJECT" --changed-file /tmp/changed.txt)
+          args+=(--machine "$MACHINE" --process "$PROCESS" --filament "$FILAMENT")
+          args+=(--bambu "$BAMBU_ROOT/bin/bambu-studio")
+          if [ "${{ steps.files.outputs.full }}" = "1" ]; then args+=(--full); fi
+          xvfb-run -a python3 print-gate/check_print.py \
+            "${args[@]}" \
+            --slicer "$ORCA_ROOT/AppRun" \
+            --log-dir "$RUNNER_TEMP/cad-logs" \
+            --summary "$RUNNER_TEMP/cad-logs/summary.md"
+
+      - name: Rebuild the print project and confirm it matches the commit
+        if: success() && steps.files.outputs.project == '1'
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          set -euo pipefail
+          python3 print-gate/build_print_project.py --project "$PROJECT"
+          mapfile -t tracked < <(python3 print-gate/check_print.py --list-tracked --project "$PROJECT")
+          git diff --exit-code -- "${tracked[@]}"
+
+      - name: Re-slice the print project
+        if: success() && steps.files.outputs.project == '1'
+        env:
+          PROJECT: ${{ inputs.project }}
+          MACHINE: ${{ inputs.machine_profile }}
+          PROCESS: ${{ inputs.process_profile }}
+          FILAMENT: ${{ inputs.filament_profile }}
+        run: |
+          set -euo pipefail
+          ORCA_ROOT="${RUNNER_TOOL_CACHE}/orcaslicer-2.3.2"
+          BAMBU_ROOT="${RUNNER_TOOL_CACHE}/bambustudio-02.08.02.61"
+          : > "$RUNNER_TEMP/cad-logs/sections.txt"
+          while IFS=$'\t' read -r model summary; do
+            [ -n "$model" ] || continue
+            xvfb-run -a python3 print-gate/check_print.py \
+              --project "$PROJECT" \
+              --no-fixtures \
+              --machine "$MACHINE" --process "$PROCESS" --filament "$FILAMENT" \
+              --bambu "$BAMBU_ROOT/bin/bambu-studio" \
+              --slicer "$ORCA_ROOT/AppRun" \
+              --verify-project "$model" \
+              --log-dir "$RUNNER_TEMP/cad-logs" \
+              --summary "$RUNNER_TEMP/cad-logs/$summary"
+            echo "$summary" >> "$RUNNER_TEMP/cad-logs/sections.txt"
+          done < <(python3 print-gate/check_print.py --list-verify --project "$PROJECT")
+
+      - name: Job summary
+        if: always()
+        env:
+          PROJECT: ${{ inputs.project }}
+          SUMMARY_TITLE: ${{ inputs.summary_title }}
+        run: |
+          python3 print-gate/check_print.py --project "$PROJECT" --render-summary \
+            --log-dir "$RUNNER_TEMP/cad-logs" --title "$SUMMARY_TITLE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          COMMENT_MARKER: ${{ inputs.comment_marker }}
+          LOG_DIR: ${{ runner.temp }}/cad-logs
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const marker = process.env.COMMENT_MARKER;
+            const dir = process.env.LOG_DIR;
+            let body = marker + '\n';
+            const names = ['summary.md'];
+            const manifest = path.join(dir, 'sections.txt');
+            if (fs.existsSync(manifest)) {
+              for (const line of fs.readFileSync(manifest, 'utf8').split('\n')) {
+                if (line.trim()) names.push(line.trim());
+              }
+            }
+            for (const name of names) {
+              const file = path.join(dir, name);
+              if (fs.existsSync(file)) body += '\n' + fs.readFileSync(file, 'utf8');
+            }
+            if (body.trim() === marker) body += '\nCheck failed before writing a summary.';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.data.find(c => (c.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Upload logs and projects
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            ${{ runner.temp }}/cad-logs
+            ${{ inputs.project }}/print/*.3mf
+          if-no-files-found: warn
